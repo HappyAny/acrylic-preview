@@ -1,0 +1,11 @@
+node_modules/
+npm-cache/
+*.log
+service.pid
+artifacts/
+
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

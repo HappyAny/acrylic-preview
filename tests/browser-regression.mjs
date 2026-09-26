@@ -1,0 +1,32 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {createCanvas,loadImage} from '@napi-rs/canvas';
+const out=fileURLToPath(new URL('../artifacts/browser-regression/',import.meta.url));await mkdir(out,{recursive:true});
+const browser=await chromium.launch({channel:'chrome',headless:true}),page=await browser.newPage({viewport:{width:1440,height:1100},deviceScaleFactor:1});
+const errors=[],posts=[],external=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});page.on('request',r=>{if(r.method()!=='GET')posts.push(r.url());if(/^https?:/.test(r.url())&&!r.url().startsWith('http://127.0.0.1:4318/'))external.push(r.url());});
+const settle=()=>page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+const set=async(id,value)=>{await page.locator('#'+id).evaluate((el,value)=>{el.value=String(value);el.dispatchEvent(new Event(el.type==='range'?'input':'change',{bubbles:true}));},value);await settle();};
+const shot=async name=>{await page.locator('#workspace').scrollIntoViewIfNeeded();await settle();await page.locator('#workspace').screenshot({path:out+'/'+name+'.png'});};
+const download=async(id,name)=>{const p=page.waitForEvent('download');await page.locator('#'+id).click();const d=await p;await d.saveAs(out+'/'+name);return out+'/'+name;};
+try{
+  await page.goto('http://127.0.0.1:4318/',{waitUntil:'networkidle'});await settle();assert(await page.locator('#flatPreview').isVisible());assert(!(await page.locator('#preview').isVisible()));await shot('01-default-flat');
+  await set('bottomPattern','stars');await set('bottomColor','gold');await set('bottomOpacity',90);await shot('02-bottom-stars');
+  await set('film','gloss');await set('filmPattern','hearts');await set('filmColor','pink');await set('filmOpacity',70);await shot('03-film-hearts-flat');
+  const flatExport=await download('exportPreview','flat-export.png');const flatImage=await loadImage(await readFile(flatExport));assert.equal(flatImage.width,1800);assert.equal(flatImage.height,1800);
+  await page.locator('[data-preview-mode="3d"]').click();await page.waitForFunction(()=>document.getElementById('previewStatus').hidden,{timeout:20000});await settle();assert(await page.locator('#preview').isVisible());await shot('04-film-hearts-3d-front');
+  const glInfo=await page.locator('#preview').evaluate(c=>{const gl=c.getContext('webgl2'),e=gl.getExtension('WEBGL_debug_renderer_info');return gl.getParameter(e?e.UNMASKED_RENDERER_WEBGL:gl.RENDERER);});
+  const backgroundSamples=await page.locator('#preview').evaluate(c=>{const gl=c.getContext('webgl2');return [.1,.5,.9].map(y=>{const b=new Uint8Array(4);gl.readPixels(Math.floor(c.width*.05),Math.floor(c.height*y),1,1,gl.RGBA,gl.UNSIGNED_BYTE,b);return [...b];});});assert.deepEqual(backgroundSamples[0],backgroundSamples[1]);assert.deepEqual(backgroundSamples[1],backgroundSamples[2]);
+  await page.locator('[data-camera="side"]').click();await shot('05-side');await page.locator('[data-view="layers"]').click();await shot('06-layers');await page.locator('[data-view="finished"]').click();await page.locator('[data-camera="front"]').click();await settle();
+  const glExport=await download('exportPreview','3d-export.png');const glImage=await loadImage(await readFile(glExport));assert.equal(glImage.width,1800);assert.equal(glImage.height,1800);
+  await page.locator('[data-preview-mode="flat"]').click();await settle();assert.equal(await page.locator('#filmPattern').inputValue(),'hearts');
+  const pattern=createCanvas(96,128),ctx=pattern.getContext('2d');ctx.fillStyle='#b4356f';ctx.fillRect(24,48,48,32);await writeFile(out+'/custom.png',pattern.toBuffer('image/png'));
+  await set('bottomPattern','custom');await page.locator('#bottomFile').setInputFiles(out+'/custom.png');await page.waitForFunction(()=>document.getElementById('bottomFileName').textContent==='custom.png');
+  await set('filmPattern','custom');await page.locator('#filmFile').setInputFiles(out+'/custom.png');await page.waitForFunction(()=>document.getElementById('filmFileName').textContent==='custom.png');await settle();await shot('07-custom-patterns');
+  const projectPath=await download('saveProject','project.json'),project=JSON.parse(await readFile(projectPath,'utf8'));assert.equal(project.version,6);assert(project.patterns.bottom.startsWith('data:image/png'));assert(project.patterns.film.startsWith('data:image/png'));assert.equal(project.state.filmPattern,'custom');
+  await page.locator('#resetAll').click();await settle();assert.equal(await page.locator('#film').inputValue(),'none');await page.locator('#projectFile').setInputFiles(projectPath);await page.waitForFunction(()=>document.getElementById('film').value==='gloss');await settle();assert.equal(await page.locator('#bottomPattern').inputValue(),'custom');assert.equal(await page.locator('#filmPattern').inputValue(),'custom');
+  await page.locator('#compare').click();await set('film','gloss');await shot('08-comparison');
+  await page.setViewportSize({width:390,height:844});await settle();assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));await shot('09-mobile');
+  assert.deepEqual(errors,[]);assert.deepEqual(posts,[]);assert.deepEqual(external,[]);await writeFile(out+'/report.json',JSON.stringify({passed:true,renderer:glInfo,errors,posts,external,checks:['flat default','bottom pattern','top film pattern','3D front/side/layers','both PNG exports 1800px','custom pattern imports','v6 project round trip','comparison','mobile width']},null,2));console.log(JSON.stringify({passed:true,renderer:glInfo,errors,checks:10}));
+}finally{await browser.close();}

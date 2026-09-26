@@ -1,0 +1,20 @@
+{
+  "name": "acrylic-preview-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "build": "esbuild public/viewer3d.js --bundle --format=esm --minify --outfile=public/viewer3d.bundle.js",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.9",
+    "esbuild": "0.28.2",
+    "linkedom": "^0.18.13",
+    "playwright": "1.63.0"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  }
+}
